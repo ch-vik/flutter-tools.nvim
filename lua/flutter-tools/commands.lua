@@ -167,8 +167,19 @@ end
 ---Run the flutter application
 ---@param opts RunOpts
 function M.run(opts)
-  if M.is_running() then return ui.notify("Flutter is already running!") end
-  select_project_config(function(project_conf) run(opts, project_conf) end)
+  if M.is_running() then
+    if not config.debugger.run_via_dap then return ui.notify("Flutter is already running!") end
+    vim.ui.select(
+      { "No", "Yes" },
+      { prompt = "A session is already running, start a new one?" },
+      function(new_session)
+        if new_session == "No" then return end
+        select_project_config(function(project_conf) run(opts, project_conf) end)
+      end
+    )
+  else
+    select_project_config(function(project_conf) run(opts, project_conf) end)
+  end
 end
 
 ---@param cmd string

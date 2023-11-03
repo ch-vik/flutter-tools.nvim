@@ -85,7 +85,6 @@ function DebuggerRunner:run(paths, args, cwd, on_run_data, on_run_exit)
     end
   end
 
-  local launch_config
   if launch_configuration_count == 0 then
     ui.notify("No launch configuration for DAP found", ui.ERROR)
     return
@@ -103,6 +102,7 @@ function DebuggerRunner:run(paths, args, cwd, on_run_data, on_run_exit)
         launch_config.args = vim.list_extend(launch_config.args or {}, args or {})
         launch_config.dartSdkPath = paths.dart_sdk
         launch_config.flutterSdkPath = paths.flutter_sdk
+        launch_config.name = #dap.sessions() .. "-" .. launch_config.name
         dap.run(launch_config)
       end
     )
@@ -112,24 +112,55 @@ end
 function DebuggerRunner:send(cmd, quiet)
   local request = command_requests[cmd]
   local service_activation_request = service_activation_requests[cmd]
-  if request ~= nil then
-    dap.session():request(request)
-  elseif service_activation_request then
-    local new_value
-    if service_extensions_state[service_activation_request] == "true" then
-      new_value = "false"
-    else
-      new_value = "true"
+  -- Check if there are multiple sessions
+  local sessions = dap.sessions()
+
+  local sessionArray = {}
+  for key, value in pairs(sessions) do
+    local entry = {
+      id = key,
+      args = vim.deepcopy(value.config.args),
+      name = value.config.name,
+    }
+    table.insert(sessionArray, entry)
+  end
+
+  local send_request = function(session)
+    if request ~= nil then
+      session:request(request)
+    elseif service_activation_request then
+      local new_value
+      if service_extensions_state[service_activation_request] == "true" then
+        new_value = "false"
+      else
+        new_value = "true"
+      end
+      session:request("callService", {
+        method = service_activation_request,
+        params = {
+          enabled = new_value,
+          isolateId = service_extensions_isolateid[service_activation_request],
+        },
+      })
+    elseif not quiet then
+      ui.notify("Command " .. cmd .. " is not yet implemented for DAP runner", ui.ERROR)
     end
-    dap.session():request("callService", {
-      method = service_activation_request,
-      params = {
-        enabled = new_value,
-        isolateId = service_extensions_isolateid[service_activation_request],
-      },
-    })
-  elseif not quiet then
-    ui.notify("Command " .. cmd .. " is not yet implemented for DAP runner", ui.ERROR)
+  end
+
+  if not config.debugger.every_session then
+    require("dap.ui").pick_if_many(
+      sessionArray,
+      "Pick debugging session:",
+      function(item) return fmt("%d : %s | %s", item.id, item.name, vim.inspect(item.args)) end,
+      function(session)
+        if session == nil then return end
+        send_request(sessions[session.id])
+      end
+    )
+  else
+    for id in pairs(sessions) do
+      send_request(sessions[id])
+    end
   end
 end
 
